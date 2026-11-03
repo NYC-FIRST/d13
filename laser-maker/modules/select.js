@@ -4,7 +4,7 @@
 import { store, removeIdsFromGroups } from './state.js';
 import { tools } from './tools.js';
 import { artboard } from './artboard.js';
-import { svgNS, setAttrs, rotatePoint, rotatedCorners, rectToPathData, getPathCornerInfos, getPolyCornerInfos, deepCloneWithNewIds, pxToIn, inToPx, polygonPoints, starPoints, scalePathD } from './utils.js';
+import { svgNS, setAttrs, rotatePoint, rotatedCorners, rectToPathData, getPathCornerInfos, getPolyCornerInfos, deepCloneWithNewIds, pxToIn, inToPx, polygonPoints, starPoints, scalePathD, applyPathCorners } from './utils.js';
 import { computeSnap, computePointSnap, renderGuides, clearGuides } from './guides.js';
 import { enterTextEdit } from './type.js';
 import { enterIsolation, exitIsolation } from './group.js';
@@ -615,6 +615,7 @@ tools.register('direct', {
       const sh = store.findShape(shapeId);
       this._cpOrigSegs = sh?.type === 'path' ? _parseAllPathSegs(sh.attrs.d) : null;
       this._cpOrigRot = sh?.rotation || 0;
+      this._cpOrig = sh ? snapshotGeom(sh) : null;
       store.beginTransaction();
       return;
     }
@@ -758,9 +759,9 @@ tools.register('direct', {
 
   onMove({ raw, event }) {
     if (this._mode === 'corner-round') {
-      const dx = raw.x - this._cwStartPt.x;
-      const dy = raw.y - this._cwStartPt.y;
       const shLive = store.findShape(this._cwShapeId);
+      // Inward/bisector directions are shape-local — unrotate the drag to match.
+      const { x: dx, y: dy } = rotatePoint(raw.x - this._cwStartPt.x, raw.y - this._cwStartPt.y, 0, 0, -(shLive?.rotation || 0));
       if (shLive?.type === 'rect') {
         const [sx, sy] = cwInward(this._cwCorner);
         const delta = (dx * sx + dy * sy) / Math.SQRT2;
@@ -830,6 +831,7 @@ tools.register('direct', {
         const sh = store.findShape(this._cpShapeId);
         if (!sh || !this._cpOrigSegs) return;
         sh.attrs.d = _rebuildPathCP(this._cpOrigSegs, this._cpSegIdx, this._cpRole, ldx, ldy);
+        _keepRotPivot(sh, this._cpOrig);
       }, 'transform');
       return;
     }
@@ -870,6 +872,7 @@ tools.register('direct', {
             ldy = unrot.y - ocy;
           }
           applyAnchorsDelta(sh, orig, idxs, ldx, ldy);
+          _keepRotPivot(sh, orig);
         }
       }, 'transform');
     } else if (this._mode === 'marquee') {
@@ -902,14 +905,19 @@ tools.register('direct', {
     }
   },
 
-  onUp() {
+  onUp({ event }) {
     if (this._mode === 'cp') store.endTransaction('cp-move');
     if (this._mode === 'anchor') store.endTransaction('anchor-move');
     if (this._mode === 'corner-round') {
       store.endTransaction('corner-round');
       directCWActiveCorner = null;
     }
-    if (this._mode === 'marquee' && this._marqueeRect) { this._marqueeRect.remove(); this._marqueeRect = null; }
+    if (this._mode === 'marquee' && this._marqueeRect) {
+      // Plain click on empty (no drag) = deselect all, per spec
+      const r = this._marqueeRect;
+      if (!event?.shiftKey && !(+r.getAttribute('width') || +r.getAttribute('height'))) store.patch(st => st.selection = [], 'selection');
+      this._marqueeRect.remove(); this._marqueeRect = null;
+    }
     clearGuides();
     this._mode = null;
   },
@@ -1449,35 +1457,6 @@ function drawAnchors(id) {
     }
   }
 
-  // Corner widgets for path shapes
-  if (sh.type === 'path' && sh.attrs.d) {
-    const cwr = CW_R / z;
-    for (const info of getPathCornerInfos(sh.attrs.d)) {
-      const strIdx = String(info.idx);
-      if (directCWActiveCorner !== null) {
-        if (directCWActiveCorner !== strIdx) continue;
-      } else {
-        const isSelected = selectedAnchors.some(a => a.shapeId === id && a.idx === info.idx);
-        const isHovCorner = directHoveredCorner?.shapeId === id && directHoveredCorner.name === strIdx;
-        const isSegEnd = hoveredSegment?.shapeId === id
-                      && (hoveredSegment.idx1 === info.idx || hoveredSegment.idx2 === info.idx);
-        if (!isSelected && !isHovCorner && !isSegEnd) continue;
-      }
-      const radius = sh.attrs.corners?.[info.idx] ?? 0;
-      const fitInset = info.sinHalf > 0.01 ? CW_R / (z * info.sinHalf) : CW_MIN / z;
-      const inset = Math.max(CW_MIN / z, fitInset, radius);
-      let wcx = info.x + info.bisX * inset;
-      let wcy = info.y + info.bisY * inset;
-      if (rot) { const rp = rotatePoint(wcx, wcy, cx, cy, rot); wcx = rp.x; wcy = rp.y; }
-      const isActive = directCWActiveCorner === strIdx;
-      const c = svgNS('circle');
-      setAttrs(c, { cx: wcx, cy: wcy, r: cwr, class: isActive ? 'corner-widget corner-widget-active' : 'corner-widget' });
-      c.dataset.cornerWidget = `${id}:${info.idx}`;
-      overlay.appendChild(c);
-      if (directCWActiveCorner === strIdx) _appendCornerReadout(overlay, wcx, wcy, sh, strIdx, z);
-    }
-  }
-
   // Corner widgets — selective visibility per corner (rect)
   if (sh.type === 'rect') {
     const cwr = CW_R / z;
@@ -1584,10 +1563,8 @@ function applyAnchorsDelta(sh, orig, idxs, dx, dy) {
       // Anchors: 0=nw, 1=ne, 2=se, 3=sw  (matches anchorPoints order)
       const o = orig.attrs;
       const isSimple = !o.rx && !o.r_nw && !o.r_ne && !o.r_se && !o.r_sw;
-      // Single corner drag, or adjacent-segment drag on a simple rect → convert to free-form path
-      const s2 = idxs.length === 2 && [...idxs].sort((a, b) => a - b);
-      const isAdjacentSegment = s2 && (s2[1] - s2[0] === 1 || (s2[0] === 0 && s2[1] === 3));
-      if ((idxs.length === 1 || isAdjacentSegment) && isSimple) {
+      // Any partial anchor set on a simple rect → convert to free-form path
+      if (isSimple && new Set(idxs).size < 4) {
         const origSegs = _parseAllPathSegs(rectToPathData(o));
         sh.type = 'path';
         sh.attrs = { d: _rebuildPath(origSegs, idxs, dx, dy) };
@@ -1642,21 +1619,40 @@ function applyAnchorsDelta(sh, orig, idxs, dx, dy) {
       if (idxs.includes(3)) sh.attrs.rx = Math.max(0.01, o.rx - dx); // left
       break;
     }
-    case 'polygon': {
-      const pts = polygonPoints(orig.attrs);
-      for (const idx of idxs) pts[idx] = { x: pts[idx].x + dx, y: pts[idx].y + dy };
-      sh.type = 'path';
-      sh.attrs = { d: polyPointsToPath(pts) };
-      break;
-    }
+    case 'polygon':
     case 'star': {
-      const pts = starPoints(orig.attrs);
+      const pts = anchorPoints(orig);
       for (const idx of idxs) pts[idx] = { x: pts[idx].x + dx, y: pts[idx].y + dy };
+      // Carry rounding over as per-vertex path corners (vertex i = path anchor i)
+      const corners = {};
+      for (const c of shapeCornerInfosWithR(orig)) if (c.radius > 0) corners[c.idx] = c.radius;
       sh.type = 'path';
-      sh.attrs = { d: polyPointsToPath(pts) };
+      sh.attrs = { d: polyPointsToPath(pts), ...(Object.keys(corners).length && { corners }) };
       break;
     }
   }
+}
+
+// Rotation pivots on the bbox center, so an anchor edit that shifts the bbox would
+// swing every untouched anchor. Translate by R(Δ)−Δ (Δ = center shift) to pin them.
+function _keepRotPivot(sh, orig) {
+  const rot = sh.rotation || 0;
+  if (!rot || !orig) return;
+  const a = _bboxNow(orig), b = _bboxNow(sh);
+  const dx = (b.x + b.w / 2) - (a.x + a.w / 2), dy = (b.y + b.h / 2) - (a.y + a.h / 2);
+  const r = rotatePoint(dx, dy, 0, 0, rot);
+  translateShape(sh, snapshotGeom(sh), r.x - dx, r.y - dy);
+}
+
+// Path bbox is cached from the last render (stale mid-patch) — measure the new d directly.
+function _bboxNow(sh) {
+  if (sh.type !== 'path') return artboard.getShapeBBox(sh);
+  const p = svgNS('path');
+  p.setAttribute('d', sh.attrs.corners ? applyPathCorners(sh.attrs.d, sh.attrs.corners) : sh.attrs.d);
+  overlay.appendChild(p);
+  const b = p.getBBox();
+  p.remove();
+  return { x: b.x, y: b.y, w: b.width, h: b.height };
 }
 
 function anchorPoints(sh) {
@@ -1797,7 +1793,7 @@ function _rebuildPath(origSegs, anchorIdxs, dx, dy) {
 // Toggle a path segment between straight (L) and cubic bezier (C).
 // Double-click on L segment → C with collinear handles at 1/3 and 2/3 (ready to drag).
 // Double-click on C segment → L (strips handles).
-// Z-close segment (idx1=n-1, idx2=0) is handled by inserting an explicit C before Z.
+// Z-close segment (idx2 < idx1, idx2 = subpath start) is handled by inserting an explicit C before its Z.
 function _toggleSegmentCurve(shapeId, idx1, idx2) {
   const sh = store.findShape(shapeId);
   if (!sh || sh.type !== 'path') return;
@@ -1808,7 +1804,6 @@ function _toggleSegmentCurve(shapeId, idx1, idx2) {
   for (let i = 0; i < allSegs.length; i++) {
     if (!allSegs[i].isZ) { anchorToSeg.set(anchorCount, i); anchorCount++; }
   }
-  const n = anchorCount;
 
   const segSX = [], segSY = [];
   let lx = 0, ly = 0;
@@ -1817,30 +1812,23 @@ function _toggleSegmentCurve(shapeId, idx1, idx2) {
     if (!allSegs[i].isZ) { lx = allSegs[i].x; ly = allSegs[i].y; }
   }
 
-  const closed = /z/i.test(sh.attrs.d);
-
-  // Z-close segment (straight line implied by Z, no explicit segment)
-  if (idx2 === 0 && closed && idx1 === n - 1) {
-    const lastSi = anchorToSeg.get(n - 1);
-    const m0si   = anchorToSeg.get(0);
+  // Z-close segment (straight line implied by Z, no explicit segment) — idx2 is
+  // its subpath's M. Insert an explicit C right after idx1, before that Z.
+  if (idx2 < idx1) {
+    const lastSi = anchorToSeg.get(idx1);
+    const m0si   = anchorToSeg.get(idx2);
     if (lastSi == null || m0si == null) return;
     const x0 = allSegs[lastSi].x, y0 = allSegs[lastSi].y;
     const mx = allSegs[m0si].x,   my = allSegs[m0si].y;
     const cp1x = x0 + (mx - x0) / 3, cp1y = y0 + (my - y0) / 3;
     const cp2x = x0 + (mx - x0) * 2/3, cp2y = y0 + (my - y0) * 2/3;
-    let d = '', inserted = false;
+    let d = '';
     for (let i = 0; i < allSegs.length; i++) {
-      if (allSegs[i].isZ && !inserted) {
-        d += ` C ${cp1x.toFixed(3)} ${cp1y.toFixed(3)} ${cp2x.toFixed(3)} ${cp2y.toFixed(3)} ${mx.toFixed(3)} ${my.toFixed(3)} Z`;
-        inserted = true;
-      } else if (allSegs[i].isZ) {
-        d += ' Z';
-      } else {
-        d += ' ' + allSegs[i].rawSegment;
-      }
+      d += ' ' + allSegs[i].rawSegment;
+      if (i === lastSi) d += ` C ${cp1x.toFixed(3)} ${cp1y.toFixed(3)} ${cp2x.toFixed(3)} ${cp2y.toFixed(3)} ${mx.toFixed(3)} ${my.toFixed(3)}`;
     }
     store.commit(s => { const live = store.findShape(shapeId); if (live) live.attrs.d = d.trim(); }, 'toggle-curve');
-    selectedAnchors = [{ shapeId, idx: n - 1 }, { shapeId, idx: n }];
+    selectedAnchors = [{ shapeId, idx: idx1 }, { shapeId, idx: idx1 + 1 }];
     renderOverlay();
     return;
   }
@@ -1891,10 +1879,9 @@ function _getHoverSegPath(sh, idx1, idx2, cx, cy, rot) {
     const pt = rot ? rotatePoint(x, y, cx, cy, rot) : { x, y };
     return `${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`;
   };
-  const n = anchorCount;
-  // Closing segment: straight line back to anchor 0
-  if (idx1 === n - 1 && idx2 === 0) {
-    const s0 = anchorToSeg.get(n - 1), s1 = anchorToSeg.get(0);
+  // Closing segment: straight line back to the subpath's first anchor
+  if (idx2 < idx1) {
+    const s0 = anchorToSeg.get(idx1), s1 = anchorToSeg.get(idx2);
     if (s0 == null || s1 == null) return null;
     return `M ${rp(allSegs[s0].x, allSegs[s0].y)} L ${rp(allSegs[s1].x, allSegs[s1].y)}`;
   }
@@ -2103,7 +2090,6 @@ function _findNearestPathSegment(sh, raw) {
     if (!allSegs[i].isZ) { lx = allSegs[i].x; ly = allSegs[i].y; }
   }
 
-  const closed = /z/i.test(d);
   const threshold = 10 / store.get().viewport.zoom;
   let minDist = Infinity, bestI = -1, bestJ = -1;
 
@@ -2128,11 +2114,15 @@ function _findNearestPathSegment(sh, raw) {
     if (dist < minDist) { minDist = dist; bestI = ai - 1; bestJ = ai; }
   }
 
-  if (closed) {
-    const p0 = rp(allSegs[anchorToSeg.get(n-1)].x, allSegs[anchorToSeg.get(n-1)].y);
-    const p1 = rp(allSegs[anchorToSeg.get(0)].x, allSegs[anchorToSeg.get(0)].y);
-    const dist = distToSegment(raw, p0, p1);
-    if (dist < minDist) { minDist = dist; bestI = n - 1; bestJ = 0; }
+  // Implied Z segment of EACH closed subpath (last anchor → its own M), so compound
+  // paths get no phantom segment between subpaths. Closing pairs have idx2 < idx1.
+  let ai = -1, subStart = 0;
+  for (const s of allSegs) {
+    if (!s.isZ) { ai++; if (s.cmd.toUpperCase() === 'M') subStart = ai; continue; }
+    if (ai <= subStart) continue;
+    const a = allSegs[anchorToSeg.get(ai)], b = allSegs[anchorToSeg.get(subStart)];
+    const dist = distToSegment(raw, rp(a.x, a.y), rp(b.x, b.y));
+    if (dist < minDist) { minDist = dist; bestI = ai; bestJ = subStart; }
   }
 
   if (minDist > threshold) return null;
@@ -2367,6 +2357,16 @@ function updateStatusSel() {
 // Make sure overlay updates on every store change
 store.subscribe((s, reason) => {
   if (reason === 'undo' || reason === 'redo') { selectedAnchors = []; directHoveredCorner = null; }
+  // Drop anchors whose shape left the selection or whose index no longer exists
+  // (e.g. polygon sides reduced) — stale ones get dragged invisibly or crash.
+  if (selectedAnchors.length) {
+    const counts = new Map();
+    selectedAnchors = selectedAnchors.filter(a => {
+      if (!s.selection.includes(a.shapeId)) return false;
+      if (!counts.has(a.shapeId)) { const sh = store.findShape(a.shapeId); counts.set(a.shapeId, sh ? anchorPoints(sh).length : 0); }
+      return a.idx < counts.get(a.shapeId);
+    });
+  }
   // Cache text/path bbox after render — needed for resize calc (recurse through groups)
   for (const sh of store.allShapes()) {
     if ((sh.type === 'text' || sh.type === 'path') && sh._bbox) {
