@@ -1661,11 +1661,29 @@ function anchorPoints(sh) {
 // Each point: { x, y, cmd, rawSegment, isAbs, nums, _segIdx }
 function parsePathPoints(d) {
   const allSegs = _parseAllPathSegs(d);
-  const pts = [];
-  for (let i = 0; i < allSegs.length; i++) {
-    if (!allSegs[i].isZ) pts.push({ ...allSegs[i], _segIdx: i });
+  return _anchorMap(allSegs).toSeg.map(i => ({ ...allSegs[i], _segIdx: i }));
+}
+
+// Anchor index → segment index (toSeg). A segment that lands back on its subpath's
+// M right before Z is that subpath's closing segment, not a new anchor — the pen
+// tool and curve toggle write these. It's folded into the M anchor (closers: M's
+// anchor idx → closing seg idx), matching utils' _parseMixedSubpaths so corner
+// indices agree.
+function _anchorMap(segs) {
+  const toSeg = [], closers = new Map();
+  let mSeg = -1, mAnchor = -1;
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    if (s.isZ) continue;
+    if (s.cmd.toUpperCase() === 'M') { mSeg = i; mAnchor = toSeg.length; }
+    else if (segs[i + 1]?.isZ && mSeg >= 0 && toSeg.length - mAnchor >= 2
+             && Math.hypot(s.x - segs[mSeg].x, s.y - segs[mSeg].y) < 0.01) {
+      closers.set(mAnchor, i);
+      continue;
+    }
+    toSeg.push(i);
   }
-  return pts;
+  return { toSeg, closers };
 }
 
 // Parse ALL segments including Z. Used internally for curve-preserving reconstruction.
@@ -1725,14 +1743,14 @@ function _parseAllPathSegs(d) {
 // Rebuild path from all-segments array, moving only the endpoint of affected anchors.
 // Preserves all control points and curve commands for non-moved segments.
 function _rebuildPath(origSegs, anchorIdxs, dx, dy) {
-  // anchorIdxs are indices into the NON-Z subset (from parsePathPoints).
-  // Map anchor index → segment index in origSegs.
-  let anchorCount = 0;
-  const anchorToSeg = new Map();
-  for (let i = 0; i < origSegs.length; i++) {
-    if (!origSegs[i].isZ) { anchorToSeg.set(anchorCount, i); anchorCount++; }
+  // anchorIdxs index parsePathPoints. Moving an M anchor also moves the endpoint
+  // of its folded closing segment so the subpath stays closed.
+  const { toSeg, closers } = _anchorMap(origSegs);
+  const movedSegs = new Set();
+  for (const i of anchorIdxs) {
+    if (toSeg[i] != null) movedSegs.add(toSeg[i]);
+    if (closers.has(i)) movedSegs.add(closers.get(i));
   }
-  const movedSegs = new Set(anchorIdxs.map(i => anchorToSeg.get(i)).filter(i => i != null));
 
   let d = '';
   let prevX = 0, prevY = 0;
@@ -1777,17 +1795,14 @@ function _rebuildPath(origSegs, anchorIdxs, dx, dy) {
 // Toggle a path segment between straight (L) and cubic bezier (C).
 // Double-click on L segment → C with collinear handles at 1/3 and 2/3 (ready to drag).
 // Double-click on C segment → L (strips handles).
-// Z-close segment (idx2 < idx1, idx2 = subpath start) is handled by inserting an explicit C before its Z.
+// Closing segment (idx2 < idx1, idx2 = subpath's M): straight → explicit C before
+// its Z (folded, so no new anchor); curved → drop the C and let Z draw the line.
 function _toggleSegmentCurve(shapeId, idx1, idx2) {
   const sh = store.findShape(shapeId);
   if (!sh || sh.type !== 'path') return;
 
   const allSegs = _parseAllPathSegs(sh.attrs.d);
-  let anchorCount = 0;
-  const anchorToSeg = new Map();
-  for (let i = 0; i < allSegs.length; i++) {
-    if (!allSegs[i].isZ) { anchorToSeg.set(anchorCount, i); anchorCount++; }
-  }
+  const { toSeg, closers } = _anchorMap(allSegs);
 
   const segSX = [], segSY = [];
   let lx = 0, ly = 0;
@@ -1796,28 +1811,28 @@ function _toggleSegmentCurve(shapeId, idx1, idx2) {
     if (!allSegs[i].isZ) { lx = allSegs[i].x; ly = allSegs[i].y; }
   }
 
-  // Z-close segment (straight line implied by Z, no explicit segment) — idx2 is
-  // its subpath's M. Insert an explicit C right after idx1, before that Z.
   if (idx2 < idx1) {
-    const lastSi = anchorToSeg.get(idx1);
-    const m0si   = anchorToSeg.get(idx2);
+    const lastSi = toSeg[idx1], m0si = toSeg[idx2];
     if (lastSi == null || m0si == null) return;
+    const closer = closers.get(idx2);
+    const cc = closer != null ? allSegs[closer].cmd.toUpperCase() : null;
+    if (cc && !'CLHV'.includes(cc)) return;
     const x0 = allSegs[lastSi].x, y0 = allSegs[lastSi].y;
     const mx = allSegs[m0si].x,   my = allSegs[m0si].y;
-    const cp1x = x0 + (mx - x0) / 3, cp1y = y0 + (my - y0) / 3;
-    const cp2x = x0 + (mx - x0) * 2/3, cp2y = y0 + (my - y0) * 2/3;
+    const curve = `C ${(x0 + (mx - x0) / 3).toFixed(3)} ${(y0 + (my - y0) / 3).toFixed(3)} ${(x0 + (mx - x0) * 2/3).toFixed(3)} ${(y0 + (my - y0) * 2/3).toFixed(3)} ${mx.toFixed(3)} ${my.toFixed(3)}`;
     let d = '';
     for (let i = 0; i < allSegs.length; i++) {
+      if (i === closer) { if (cc !== 'C') d += ' ' + curve; continue; }
       d += ' ' + allSegs[i].rawSegment;
-      if (i === lastSi) d += ` C ${cp1x.toFixed(3)} ${cp1y.toFixed(3)} ${cp2x.toFixed(3)} ${cp2y.toFixed(3)} ${mx.toFixed(3)} ${my.toFixed(3)}`;
+      if (i === lastSi && closer == null) d += ' ' + curve;
     }
     store.commit(s => { const live = store.findShape(shapeId); if (live) live.attrs.d = d.trim(); }, 'toggle-curve');
-    selectedAnchors = [{ shapeId, idx: idx1 }, { shapeId, idx: idx1 + 1 }];
+    selectedAnchors = [{ shapeId, idx: idx1 }, { shapeId, idx: idx2 }];
     renderOverlay();
     return;
   }
 
-  const si = anchorToSeg.get(idx2);
+  const si = toSeg[idx2];
   if (si == null) return;
   const seg = allSegs[si];
   const ucmd = seg.cmd.toUpperCase();
@@ -1848,11 +1863,7 @@ function _toggleSegmentCurve(shapeId, idx1, idx2) {
 // Returns SVG `d` string (in artboard/screen space) for the segment between anchor idx1→idx2.
 function _getHoverSegPath(sh, idx1, idx2, cx, cy, rot) {
   const allSegs = _parseAllPathSegs(sh.attrs.d);
-  let anchorCount = 0;
-  const anchorToSeg = new Map();
-  for (let i = 0; i < allSegs.length; i++) {
-    if (!allSegs[i].isZ) { anchorToSeg.set(anchorCount, i); anchorCount++; }
-  }
+  const { toSeg, closers } = _anchorMap(allSegs);
   const segSX = [], segSY = [];
   let lx = 0, ly = 0;
   for (let i = 0; i < allSegs.length; i++) {
@@ -1863,13 +1874,13 @@ function _getHoverSegPath(sh, idx1, idx2, cx, cy, rot) {
     const pt = rot ? rotatePoint(x, y, cx, cy, rot) : { x, y };
     return `${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`;
   };
-  // Closing segment: straight line back to the subpath's first anchor
-  if (idx2 < idx1) {
-    const s0 = anchorToSeg.get(idx1), s1 = anchorToSeg.get(idx2);
+  // Closing segment: its folded explicit segment if any, else Z's straight line
+  if (idx2 < idx1 && !closers.has(idx2)) {
+    const s0 = toSeg[idx1], s1 = toSeg[idx2];
     if (s0 == null || s1 == null) return null;
     return `M ${rp(allSegs[s0].x, allSegs[s0].y)} L ${rp(allSegs[s1].x, allSegs[s1].y)}`;
   }
-  const si = anchorToSeg.get(idx2);
+  const si = idx2 < idx1 ? closers.get(idx2) : toSeg[idx2];
   if (si == null) return null;
   const seg = allSegs[si];
   const sx = segSX[si], sy = segSY[si];
@@ -1894,11 +1905,7 @@ function _getHoverSegPath(sh, idx1, idx2, cx, cy, rot) {
 // space and (ax,ay) is the anchor end for the handle line.
 function getPathCPs(d, selectedAnchorIdxs) {
   const allSegs = _parseAllPathSegs(d);
-  let anchorCount = 0;
-  const anchorToSeg = new Map();
-  for (let i = 0; i < allSegs.length; i++) {
-    if (!allSegs[i].isZ) { anchorToSeg.set(anchorCount, i); anchorCount++; }
-  }
+  const { toSeg, closers } = _anchorMap(allSegs);
   // Pre-compute start point of each segment (= endpoint of previous non-Z seg)
   const segSX = [], segSY = [];
   let lx = 0, ly = 0;
@@ -1939,11 +1946,15 @@ function getPathCPs(d, selectedAnchorIdxs) {
   };
 
   for (const ai of selectedAnchorIdxs) {
-    const si = anchorToSeg.get(ai);
+    const si = toSeg[ai];
     if (si == null) continue;
-    const ucmd = allSegs[si].cmd.toUpperCase();
-    if (ucmd === 'C') { addCP(si, 'cp1'); addCP(si, 'cp2'); }
-    else if (ucmd === 'Q') { addCP(si, 'cp1'); }
+    // Incoming segment — for an M anchor that's its folded closing segment
+    for (const inSi of [si, closers.get(ai)]) {
+      if (inSi == null) continue;
+      const ucmd = allSegs[inSi].cmd.toUpperCase();
+      if (ucmd === 'C') { addCP(inSi, 'cp1'); addCP(inSi, 'cp2'); }
+      else if (ucmd === 'Q') { addCP(inSi, 'cp1'); }
+    }
     // Outgoing handle: cp1 of next non-Z segment
     let nextSi = si + 1;
     while (nextSi < allSegs.length && allSegs[nextSi].isZ) nextSi++;
@@ -2053,12 +2064,8 @@ function _findNearestPathSegment(sh, raw) {
   if (rot) { const b = artboard.getShapeBBox(sh); cx = b.x + b.w/2; cy = b.y + b.h/2; }
   const rp = (x, y) => rot ? rotatePoint(x, y, cx, cy, rot) : { x, y };
 
-  let anchorCount = 0;
-  const anchorToSeg = new Map();
-  for (let i = 0; i < allSegs.length; i++) {
-    if (!allSegs[i].isZ) { anchorToSeg.set(anchorCount, i); anchorCount++; }
-  }
-  const n = anchorCount;
+  const { toSeg, closers } = _anchorMap(allSegs);
+  const n = toSeg.length;
   if (n < 2) return null;
 
   const segSX = [], segSY = [];
@@ -2067,40 +2074,45 @@ function _findNearestPathSegment(sh, raw) {
     segSX[i] = lx; segSY[i] = ly;
     if (!allSegs[i].isZ) { lx = allSegs[i].x; ly = allSegs[i].y; }
   }
+  const segDist = si => {
+    const seg = allSegs[si], ucmd = seg.cmd.toUpperCase();
+    const sx = segSX[si], sy = segSY[si];
+    const p0 = rp(sx, sy), p1 = rp(seg.x, seg.y);
+    if (ucmd === 'C') {
+      const cp1 = rp(seg.isAbs ? seg.nums[0] : sx + seg.nums[0], seg.isAbs ? seg.nums[1] : sy + seg.nums[1]);
+      const cp2 = rp(seg.isAbs ? seg.nums[2] : sx + seg.nums[2], seg.isAbs ? seg.nums[3] : sy + seg.nums[3]);
+      return distToCubicBezier(raw, p0, cp1, cp2, p1);
+    }
+    if (ucmd === 'Q') {
+      const cp = rp(seg.isAbs ? seg.nums[0] : sx + seg.nums[0], seg.isAbs ? seg.nums[1] : sy + seg.nums[1]);
+      return distToQuadBezier(raw, p0, cp, p1);
+    }
+    return distToSegment(raw, p0, p1);
+  };
+  const isM = ai => allSegs[toSeg[ai]].cmd.toUpperCase() === 'M';
 
   const threshold = 10 / store.get().viewport.zoom;
   let minDist = Infinity, bestI = -1, bestJ = -1;
 
   for (let ai = 1; ai < n; ai++) {
-    const si = anchorToSeg.get(ai);
-    const seg = allSegs[si];
-    const ucmd = seg.cmd.toUpperCase();
-    if (ucmd === 'M') continue;
-    const sx = segSX[si], sy = segSY[si];
-    const p0 = rp(sx, sy), p1 = rp(seg.x, seg.y);
-    let dist;
-    if (ucmd === 'C') {
-      const cp1 = rp(seg.isAbs ? seg.nums[0] : sx + seg.nums[0], seg.isAbs ? seg.nums[1] : sy + seg.nums[1]);
-      const cp2 = rp(seg.isAbs ? seg.nums[2] : sx + seg.nums[2], seg.isAbs ? seg.nums[3] : sy + seg.nums[3]);
-      dist = distToCubicBezier(raw, p0, cp1, cp2, p1);
-    } else if (ucmd === 'Q') {
-      const cp = rp(seg.isAbs ? seg.nums[0] : sx + seg.nums[0], seg.isAbs ? seg.nums[1] : sy + seg.nums[1]);
-      dist = distToQuadBezier(raw, p0, cp, p1);
-    } else {
-      dist = distToSegment(raw, p0, p1);
-    }
+    if (isM(ai)) continue;
+    const dist = segDist(toSeg[ai]);
     if (dist < minDist) { minDist = dist; bestI = ai - 1; bestJ = ai; }
   }
 
-  // Implied Z segment of EACH closed subpath (last anchor → its own M), so compound
-  // paths get no phantom segment between subpaths. Closing pairs have idx2 < idx1.
-  let ai = -1, subStart = 0;
-  for (const s of allSegs) {
-    if (!s.isZ) { ai++; if (s.cmd.toUpperCase() === 'M') subStart = ai; continue; }
-    if (ai <= subStart) continue;
-    const a = allSegs[anchorToSeg.get(ai)], b = allSegs[anchorToSeg.get(subStart)];
-    const dist = distToSegment(raw, rp(a.x, a.y), rp(b.x, b.y));
-    if (dist < minDist) { minDist = dist; bestI = ai; bestJ = subStart; }
+  // Closing segment of EACH closed subpath (last anchor → its own M): the folded
+  // explicit segment if any, else Z's straight line. No phantom segment between
+  // subpaths of a compound path. Closing pairs have idx2 < idx1.
+  for (let m = 0; m < n; m++) {
+    if (!isM(m)) continue;
+    let last = m;
+    while (last + 1 < n && !isM(last + 1)) last++;
+    if (last === m) continue;
+    const closer = closers.get(m);
+    if (closer == null && !allSegs[toSeg[last] + 1]?.isZ) continue; // open subpath
+    const a = allSegs[toSeg[last]], b = allSegs[toSeg[m]];
+    const dist = closer != null ? segDist(closer) : distToSegment(raw, rp(a.x, a.y), rp(b.x, b.y));
+    if (dist < minDist) { minDist = dist; bestI = last; bestJ = m; }
   }
 
   if (minDist > threshold) return null;
