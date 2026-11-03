@@ -488,10 +488,10 @@ tools.register('select', {
   },
 
   _doCornerRound(raw) {
-    const dx = raw.x - this._cwStartPt.x;
-    const dy = raw.y - this._cwStartPt.y;
     const sh = store.findShape(this._cwShapeId);
     if (!sh) return;
+    // Inward/bisector directions are shape-local — unrotate the drag to match.
+    const { x: dx, y: dy } = rotatePoint(raw.x - this._cwStartPt.x, raw.y - this._cwStartPt.y, 0, 0, -(sh.rotation || 0));
     if (sh.type === 'rect') {
       const [sx, sy] = cwInward(this._cwCorner);
       const delta = (dx * sx + dy * sy) / Math.SQRT2;
