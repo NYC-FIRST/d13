@@ -228,10 +228,11 @@ function num(n) {
   return parseFloat(n.toFixed(3)).toString();
 }
 
+// Identity still rewrites: output is always absolute, cleanly separated commands
+// (H/V → L, implicit repeats split) — the form every other parser expects.
 export function applyMatrixToD(d, m) {
   if (!d) return null;
-  const [a, b, c, dd, e, f] = m;
-  if (a === 1 && b === 0 && c === 0 && dd === 1 && e === 0 && f === 0) return d;
+  const [a, b, c, dd] = m;
 
   const P = (x, y) => ptMat(m, x, y);
   // Approximate scale factors for arc radii

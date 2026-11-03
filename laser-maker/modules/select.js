@@ -8,6 +8,7 @@ import { svgNS, setAttrs, rotatePoint, rotatedCorners, rectToPathData, getPathCo
 import { computeSnap, computePointSnap, renderGuides, clearGuides } from './guides.js';
 import { enterTextEdit } from './type.js';
 import { enterIsolation, exitIsolation } from './group.js';
+import { applyMatrixToD } from './expand-svg.js';
 
 const HANDLE_SIZE  = 8;     // CSS px
 const ROT_OFFSET   = 22;    // CSS px above bbox
@@ -1687,7 +1688,11 @@ function _anchorMap(segs) {
 }
 
 // Parse ALL segments including Z. Used internally for curve-preserving reconstruction.
+// d is normalized to absolute commands first: relative output (paper.js boolean ops,
+// imports) chains each segment to the previous point, so editing one endpoint would
+// drag every later segment along. Absolute also means H/V never appear (→ L).
 function _parseAllPathSegs(d) {
+  d = applyMatrixToD(d, [1, 0, 0, 1, 0, 0]) || '';
   const segs = [];
   const segRe = /([MmLlCcSsQqTtAaHhVvZz])([^MmLlCcSsQqTtAaHhVvZz]*)/g;
   let lx = 0, ly = 0, mx = 0, my = 0;
@@ -1752,42 +1757,26 @@ function _rebuildPath(origSegs, anchorIdxs, dx, dy) {
     if (closers.has(i)) movedSegs.add(closers.get(i));
   }
 
+  // Handles travel with their anchor (as in Illustrator): incoming = cp2 of the
+  // anchor's own C, outgoing = cp1 of the next C.
+  const cp1Segs = new Set([...movedSegs].map(si => si + 1).filter(si => origSegs[si]?.cmd === 'C'));
+
   let d = '';
-  let prevX = 0, prevY = 0;
   for (let si = 0; si < origSegs.length; si++) {
     const s = origSegs[si];
     if (s.isZ) { d += ' Z'; continue; }
-    if (!movedSegs.has(si)) {
-      d += ' ' + s.rawSegment;
-      prevX = s.x; prevY = s.y;
-      continue;
-    }
-    // Move only the endpoint of this segment; preserve control points.
-    // H/V are promoted to L so both axes move freely.
+    const end = movedSegs.has(si), cp1 = cp1Segs.has(si);
+    if (!end && !cp1) { d += ' ' + s.rawSegment; continue; }
     const nums = [...s.nums];
-    const ucmd = s.cmd.toUpperCase();
-    switch (ucmd) {
-      case 'M': case 'L': case 'T': nums[0] += dx; nums[1] += dy; break;
-      case 'H': {
-        const nx = (s.isAbs ? nums[0] : prevX + nums[0]) + dx;
-        const ny = prevY + dy;
-        d += ' L ' + nx.toFixed(3) + ' ' + ny.toFixed(3);
-        prevX = s.x; prevY = s.y;
-        continue;
-      }
-      case 'V': {
-        const nx2 = prevX + dx;
-        const ny2 = (s.isAbs ? nums[0] : prevY + nums[0]) + dy;
-        d += ' L ' + nx2.toFixed(3) + ' ' + ny2.toFixed(3);
-        prevX = s.x; prevY = s.y;
-        continue;
-      }
-      case 'C': nums[4] += dx; nums[5] += dy; break;
-      case 'S': case 'Q': nums[2] += dx; nums[3] += dy; break;
-      case 'A': nums[5] += dx; nums[6] += dy; break;
+    const shift = k => { nums[k] += dx; nums[k + 1] += dy; };
+    switch (s.cmd) { // absolute, uppercase (see _parseAllPathSegs)
+      case 'C': if (cp1) shift(0); if (end) { shift(2); shift(4); } break;
+      case 'S': if (end) { shift(0); shift(2); } break;
+      case 'Q': if (end) shift(2); break;
+      case 'A': if (end) shift(5); break;
+      default:  if (end) shift(0); // M, L, T
     }
-    d += ' ' + s.cmd + ' ' + nums.map(n => n.toFixed(3)).join(' ');
-    prevX = s.x; prevY = s.y;
+    d += ' ' + s.cmd + ' ' + nums.map(n => +n.toFixed(3)).join(' ');
   }
   return d.trim();
 }
