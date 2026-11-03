@@ -1562,34 +1562,15 @@ function applyAnchorsDelta(sh, orig, idxs, dx, dy) {
     case 'rect': {
       // Anchors: 0=nw, 1=ne, 2=se, 3=sw  (matches anchorPoints order)
       const o = orig.attrs;
-      const isSimple = !o.rx && !o.r_nw && !o.r_ne && !o.r_se && !o.r_sw;
-      // Any partial anchor set on a simple rect → convert to free-form path
-      if (isSimple && new Set(idxs).size < 4) {
-        const origSegs = _parseAllPathSegs(rectToPathData(o));
-        sh.type = 'path';
-        sh.attrs = { d: _rebuildPath(origSegs, idxs, dx, dy) };
-        break;
-      }
-      const right = o.x + o.w, bottom = o.y + o.h;
-      const moveN = idxs.includes(0) || idxs.includes(1);
-      const moveS = idxs.includes(2) || idxs.includes(3);
-      const moveW = idxs.includes(0) || idxs.includes(3);
-      const moveE = idxs.includes(1) || idxs.includes(2);
-      let nx = o.x, ny = o.y, nw = o.w, nh = o.h;
-      if (moveN && moveS) { ny = o.y + dy; }
-      else if (moveN)     { ny = o.y + dy; nh = bottom - ny; }
-      else if (moveS)     { nh = o.h + dy; }
-      if (moveW && moveE) { nx = o.x + dx; }
-      else if (moveW)     { nx = o.x + dx; nw = right - nx; }
-      else if (moveE)     { nw = o.w + dx; }
-      if (nw < 0) { nx += nw; nw = -nw; }
-      if (nh < 0) { ny += nh; nh = -nh; }
-      sh.attrs.x = nx; sh.attrs.y = ny; sh.attrs.w = nw; sh.attrs.h = nh;
-      const half = Math.min(nw, nh) / 2;
-      if (sh.attrs.rx) sh.attrs.rx = Math.min(sh.attrs.rx, half);
-      for (const k of ['r_nw', 'r_ne', 'r_se', 'r_sw']) {
-        if (sh.attrs[k] != null) sh.attrs[k] = Math.min(sh.attrs[k], half);
-      }
+      // All four anchors = plain move
+      if (new Set(idxs).size === 4) { sh.attrs.x = o.x + dx; sh.attrs.y = o.y + dy; break; }
+      // Partial set → 4-anchor path. Rounding carries over as live per-vertex
+      // corners (anchors stay on the sharp corners, like Illustrator Live Corners).
+      const r = _rectCornerRadii(orig);
+      const corners = {};
+      RECT_CORNER_NAMES.forEach((n, i) => { if (r[n] > 0) corners[i] = r[n]; });
+      sh.type = 'path';
+      sh.attrs = { d: _rebuildPath(_parseAllPathSegs(_sharpRectD(o)), idxs, dx, dy), ...(Object.keys(corners).length && { corners }) };
       break;
     }
     case 'line': {
@@ -1600,7 +1581,7 @@ function applyAnchorsDelta(sh, orig, idxs, dx, dy) {
     }
     case 'path': {
       if (orig.type === 'rect') {
-        sh.attrs.d = _rebuildPath(_parseAllPathSegs(rectToPathData(orig.attrs)), idxs, dx, dy);
+        sh.attrs.d = _rebuildPath(_parseAllPathSegs(_sharpRectD(orig.attrs)), idxs, dx, dy);
       } else if (orig.type === 'polygon' || orig.type === 'star') {
         const pts = orig.type === 'polygon' ? polygonPoints(orig.attrs) : starPoints(orig.attrs);
         for (const idx of idxs) pts[idx] = { x: pts[idx].x + dx, y: pts[idx].y + dy };
@@ -1632,6 +1613,9 @@ function applyAnchorsDelta(sh, orig, idxs, dx, dy) {
     }
   }
 }
+
+// Rect outline with no rounding — anchors 0..3 = nw, ne, se, sw.
+const _sharpRectD = ({ x, y, w, h }) => rectToPathData({ x, y, w, h });
 
 // Rotation pivots on the bbox center, so an anchor edit that shifts the bbox would
 // swing every untouched anchor. Translate by R(Δ)−Δ (Δ = center shift) to pin them.
@@ -2032,12 +2016,6 @@ function distToSegment(p, a, b) {
 
 function findNearestSegment(sh, raw) {
   if (sh.type === 'ellipse') return null;
-  if (sh.type === 'rect') {
-    const anyRound = (sh.attrs.rx || 0) > 0
-      || (sh.attrs.r_nw || 0) > 0 || (sh.attrs.r_ne || 0) > 0
-      || (sh.attrs.r_se || 0) > 0 || (sh.attrs.r_sw || 0) > 0;
-    if (anyRound) return null;
-  }
   if (sh.type === 'path' && sh.attrs.d) return _findNearestPathSegment(sh, raw);
 
   const pts = anchorPoints(sh);
