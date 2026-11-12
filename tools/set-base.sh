@@ -99,6 +99,7 @@ echo "stamped $changed file(s), skipped $skipped."
   for page in $(git ls-files '*/*.html'); do
     d="$(dirname "$page")"
     [ "$d/$(basename "$d").html" = "$page" ] || continue
+    case "$d" in offline/*) continue ;; esac   # fork-only work in progress, never routed
     printf '%s   %s   200\n' "$MOUNT/$d" "$MOUNT/$d/$(basename "$d")"
   done
 } > _redirects

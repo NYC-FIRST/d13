@@ -30,6 +30,20 @@ git -C /Users/avigoldman/dev/d13 push upstream main
 git -C /Users/avigoldman/dev/d13 push origin main     # keep the fork in sync
 ```
 
+### `offline/` — fork-only
+
+`offline/` holds works in progress and non-public projects. It exists **only on `origin`** and must never reach `upstream` (that would deploy it). Fork `main` = `upstream/main` + commits that touch nothing but `offline/`. A local `pre-push` hook refuses any push to `upstream` carrying an `offline/` path. `set-base.sh` stamps `offline/` pages but never routes them in `_redirects`.
+
+Ship deployed work from a branch off `upstream/main`, then replay the fork on top:
+
+```bash
+git switch -c my-feature upstream/main        # build + commit
+git push upstream my-feature:main             # deploys
+git switch main && git pull --rebase upstream main && git push -f origin main
+```
+
+Offline work: commit straight on `main`, stage `offline/` paths only, `git push origin main`. Promoting an offline app to the site: on a branch off `upstream/main`, `git checkout main -- offline/<app> && git mv offline/<app> <app>`, then `tools/set-base.sh /d13-app`.
+
 ## Contributing
 
 The org owns the repo; individuals keep credit for their commits. Two paths:
