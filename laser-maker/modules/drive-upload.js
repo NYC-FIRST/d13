@@ -1,7 +1,7 @@
 // modules/drive-upload.js
 // Set this to your deployed Apps Script web app URL.
 // Leave empty to disable Drive upload (local download still works).
-const DRIVE_UPLOAD_URL = 'https://script.google.com/macros/s/AKfycbzVop1eCz_xo3aBKXPHSebB7uXoBIWgwWGnPWj2ATgwTwD5kQeS9NsbtziJindaJyIF/exec';
+const DRIVE_UPLOAD_URL = 'https://script.google.com/macros/s/AKfycbx8ZkNnMhIWpMR_dNGnRyP6itB3xbqNnmYtUylGVuUVb6YoJ-vwgx58sKdvSI1XOVkPIw/exec';
 
 const PIN_KEY = 'laserMakerDrivePin';
 
