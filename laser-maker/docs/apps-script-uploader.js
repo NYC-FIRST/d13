@@ -58,7 +58,13 @@ function doPost(e) {
   var existing = root.getFoldersByName(today);
   var dateFolder = existing.hasNext() ? existing.next() : root.createFolder(today);
 
-  dateFolder.createFile(filename, svg, MimeType.PLAIN_TEXT);
+  // Same name same day = overwrite, so re-saves don't pile up duplicates.
+  var same = dateFolder.getFilesByName(filename);
+  if (same.hasNext()) {
+    same.next().setContent(svg);
+  } else {
+    dateFolder.createFile(filename, svg, MimeType.PLAIN_TEXT);
+  }
 
   return _json({ ok: true });
 }

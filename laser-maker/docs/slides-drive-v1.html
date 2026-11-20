@@ -204,7 +204,7 @@
                 </div>
                 <div style="flex:1">
                     <div class="h3" style="margin-bottom:8px">One shared folder</div>
-                    <p class="body-sm">Designs land in a date subfolder inside "Laser Maker Exports" — automatically organized by class session. Files are dimensioned in real inches, ready for Illustrator and the laser. Re-exports stack alongside rather than overwrite.</p>
+                    <p class="body-sm">Designs land in a date subfolder inside "Laser Maker Exports" — automatically organized by class session. Files are dimensioned in real inches, ready for Illustrator and the laser. Re-saving the same name the same day overwrites the earlier file.</p>
                     <div class="code-block" style="font-size:13px;margin-top:10px">Laser Maker Exports / 06-24-26 / name-project_laser.svg</div>
                 </div>
             </div>
@@ -476,7 +476,7 @@
                     <div style="display:flex;flex-direction:column;gap:6px">
                         <div style="display:flex;gap:8px;align-items:center"><div style="width:6px;height:6px;border-radius:50%;background:var(--blue);flex-shrink:0"></div><p class="body-sm" style="font-size:15px">Reads <span class="mono" style="font-size:12px">DRIVE_PIN</span> from Script Properties, compares — never in source code</p></div>
                         <div style="display:flex;gap:8px;align-items:center"><div style="width:6px;height:6px;border-radius:50%;background:var(--blue);flex-shrink:0"></div><p class="body-sm" style="font-size:15px">Finds or creates today's date subfolder (US Eastern) inside Exports</p></div>
-                        <div style="display:flex;gap:8px;align-items:center"><div style="width:6px;height:6px;border-radius:50%;background:var(--blue);flex-shrink:0"></div><p class="body-sm" style="font-size:15px">Writes SVG as plain text — duplicates stack, never overwrite</p></div>
+                        <div style="display:flex;gap:8px;align-items:center"><div style="width:6px;height:6px;border-radius:50%;background:var(--blue);flex-shrink:0"></div><p class="body-sm" style="font-size:15px">Writes SVG as plain text — same name same day overwrites</p></div>
                         <div style="display:flex;gap:8px;align-items:center"><div style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0"></div><p class="body-sm" style="font-size:15px">Returns <span class="mono" style="font-size:12px">&#123;"ok":true&#125;</span> — app caches PIN, shows green toast</p></div>
                     </div>
                 </div>
