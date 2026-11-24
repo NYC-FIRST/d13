@@ -135,6 +135,15 @@ export function getShapeAnchorPoints(sh) {
 
 // ---- Rect-to-path and path corner rounding utilities ----
 
+// Map an axis-aligned rect {x,y,w,h} from old bbox `ob` to new bbox `nb`.
+// Used for a group's clipRect (text-outline groups) so the clip scales with
+// its children instead of cropping them.
+export function scaleRect(r, ob, nb) {
+  const sx = ob.w > 0 ? nb.w / ob.w : 1;
+  const sy = ob.h > 0 ? nb.h / ob.h : 1;
+  return { x: nb.x + (r.x - ob.x) * sx, y: nb.y + (r.y - ob.y) * sy, w: r.w * sx, h: r.h * sy };
+}
+
 // Scale an SVG path `d` from old bbox `ob` to new bbox `nb`. Was copy-pasted
 // as scaleD (properties) / scalePathD (select); single home now.
 export function scalePathD(d, ob, nb) {

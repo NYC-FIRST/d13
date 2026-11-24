@@ -186,6 +186,16 @@ function reflectPathD(d, ax1, ay1, ax2, ay2) {
 function reflectShape(sh, ax1, ay1, ax2, ay2) {
   if (sh.type === 'group') {
     for (const child of sh.children) reflectShape(child, ax1, ay1, ax2, ay2);
+    if (sh.clipRect) {
+      // ponytail: bbox of the reflected corners — exact for H/V/45° axes, looser
+      // (shows a bit more) for other angles; a rotated clip would need a clip path.
+      const c = sh.clipRect;
+      const pts = [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h]]
+        .map(([x, y]) => reflectPoint(x, y, ax1, ay1, ax2, ay2));
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const x = Math.min(...xs), y = Math.min(...ys);
+      sh.clipRect = { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+    }
     return;
   }
 

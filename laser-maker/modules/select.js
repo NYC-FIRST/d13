@@ -4,7 +4,7 @@
 import { store, removeIdsFromGroups } from './state.js';
 import { tools } from './tools.js';
 import { artboard } from './artboard.js';
-import { svgNS, setAttrs, rotatePoint, rotatedCorners, rectToPathData, getPathCornerInfos, getPolyCornerInfos, deepCloneWithNewIds, pxToIn, inToPx, polygonPoints, starPoints, scalePathD, applyPathCorners } from './utils.js';
+import { svgNS, setAttrs, rotatePoint, rotatedCorners, rectToPathData, getPathCornerInfos, getPolyCornerInfos, deepCloneWithNewIds, pxToIn, inToPx, polygonPoints, starPoints, scalePathD, scaleRect, applyPathCorners } from './utils.js';
 import { computeSnap, computePointSnap, renderGuides, clearGuides } from './guides.js';
 import { enterTextEdit } from './type.js';
 import { enterIsolation, exitIsolation } from './group.js';
@@ -331,6 +331,7 @@ tools.register('select', {
       this._origBBox = artboard.getShapeBBox(sh);
       if (sh.type === 'group') {
         this._orig = null;
+        this._origClip = sh.clipRect ? { ...sh.clipRect } : null;
         this._origChildren = sh.children.map(c => ({
           snap: snapshotGeom(c),
           bbox: { ...artboard.getShapeBBox(c) },
@@ -396,6 +397,7 @@ tools.register('select', {
               h: Math.max(0.0001, cb.h * gsy),
             });
           }
+          if (this._origClip) live.clipRect = scaleRect(this._origClip, ob, { x: nx, y: ny, w: nw, h: nh });
         }, 'transform');
       } else {
         setGeomFromBBox(sh, this._orig, { x: nx, y: ny, w: nw, h: nh });
@@ -2313,6 +2315,7 @@ function setGeomFromBBox(sh, snap, nb) {
           h: Math.max(0.0001, cb.h * gsy),
         });
       }
+      if (snap.clipRect) sh.clipRect = scaleRect(snap.clipRect, ob, nb);
       break;
     }
   }

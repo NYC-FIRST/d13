@@ -3,7 +3,7 @@
 // =============================================================================
 import { store } from './state.js';
 import { artboard } from './artboard.js';
-import { inToPx, pxToIn, round, rotatedCorners, scalePathD, uid } from './utils.js';
+import { inToPx, pxToIn, round, rotatedCorners, scalePathD, scaleRect, uid } from './utils.js';
 import { PROCESS_DEFINITIONS, normalizeForProcess } from './process-registry.js';
 import { quickFlip } from './reflect.js';
 import { defaultEtchParams } from './image-filters.js';
@@ -799,6 +799,7 @@ function applyBBox(sh, ob, nb) {
           h: Math.max(0.0001, cb.h * gsy),
         });
       }
+      if (sh.clipRect) sh.clipRect = scaleRect(sh.clipRect, ob, nb);
       break;
     }
   }
