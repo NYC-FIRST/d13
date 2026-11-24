@@ -293,18 +293,22 @@ class Artboard {
     }
     // After DOM is built, compute group bboxes (DOM needed for path/text children)
     this._cacheGroupBBoxes(s.shapes);
-    // Isolation dim: reduce opacity of top-level nodes not in the isolated group
+    // Isolation dim: walk from the isolated group up to layerRoot and dim every
+    // sibling off that path. Never dim an ancestor — SVG opacity multiplies down,
+    // so a dimmed parent would fade the (nested) isolated group too.
     if (s.isolationGroup) {
-      for (const child of this.layerRoot.children) {
-        if (child.dataset.id !== s.isolationGroup) {
-          child.setAttribute('opacity', '0.25');
-          child.setAttribute('pointer-events', 'none');
+      const groupNode = this.layerRoot.querySelector(`[data-id="${CSS.escape(s.isolationGroup)}"]`);
+      for (let n = groupNode; n && n !== this.layerRoot; n = n.parentNode) {
+        for (const sib of n.parentNode.children) {
+          if (sib !== n && sib.dataset.id) {
+            sib.setAttribute('opacity', '0.25');
+            sib.setAttribute('pointer-events', 'none');
+          }
         }
       }
       // Dim non-selected siblings within the isolated group
       if (s.selection.length) {
         const selSet = new Set(s.selection);
-        const groupNode = this.layerRoot.querySelector(`[data-id="${s.isolationGroup}"]`);
         if (groupNode) {
           for (const child of groupNode.children) {
             if (child.dataset.id && !selSet.has(child.dataset.id)) {
