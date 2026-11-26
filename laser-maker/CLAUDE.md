@@ -168,7 +168,7 @@ Even-odd is right for etch (holes read as see-through) but wrong for a **cut**: 
 | `shapes.js` | Drag-to-create tools: rect, ellipse, line, polygon |
 | `properties.js` | Inspector panel: position/size/rotation, fill/stroke, process type |
 | `layers.js` | Layers panel: reorder, lock/hide, group/ungroup |
-| `pathops.js` | Boolean ops (unite/subtract/intersect) via Paper.js; Offset Path via Clipper. Rect/ellipse offset analytically; everything else via `collectPaperPaths` (recursive, world coords) → Clipper. Groups offset as one combined outline around all descendant geometry, so image-traced groups and nested groups work; group rotation applied around group bbox center. Per shape in multi-select. Skips text/line/image. |
+| `pathops.js` | Boolean ops (unite/subtract/intersect) via Paper.js; Offset Path via Clipper. Rect/ellipse offset analytically; everything else via `collectPaperPaths` (recursive, world coords) → Clipper. Groups offset as one combined outline around all descendant geometry, so image-traced groups and nested groups work; group rotation applied around group bbox center. Per shape in multi-select. Skips text/line/image. Each result is its own top-level layer inserted directly behind its source (never grouped with it — kids need to pick the outline alone); offsets become the selection. |
 | `export.js` | Clean SVG export sized in inches. Toggle in export dialog switches between artboard bounds (default) and tight ink bounds (`_contentBBox`): geometry bbox + half stroke width, rotation-corrected, used for InDesign data merge / Illustrator tiling. |
 | `guides.js` | Smart snap guides: alignment detection with other shapes |
 | `text-panel.js` | Text tool + font loading (Google Fonts, custom uploads) |

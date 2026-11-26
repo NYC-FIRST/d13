@@ -197,24 +197,12 @@ async function runOffset(amountIn) {
 
   store.commit(st => {
     const newSel = [];
+    // Offset is its own top-level layer, directly behind its source (Illustrator
+    // order) — never grouped with it, so the outline can be picked on its own.
     for (const { source, offset } of pairs) {
       const idx = st.shapes.findIndex(sh => sh.id === source.id);
-      const groupId = uid('g');
-      const grp = {
-        id: groupId,
-        type: 'group',
-        name: 'Offset Group',
-        children: [source, offset],
-        visible: true,
-        locked: false,
-        rotation: 0,
-      };
-      if (idx >= 0) {
-        st.shapes.splice(idx, 1, grp);
-      } else {
-        st.shapes.push(grp);
-      }
-      newSel.push(groupId);
+      st.shapes.splice(idx >= 0 ? idx : st.shapes.length, 0, offset);
+      newSel.push(offset.id);
     }
     st.selection = newSel;
   }, 'offset-path');
