@@ -124,6 +124,8 @@ Keyboard shortcuts in `keys.js` match Adobe Illustrator exactly — intentional 
 
 96 CSS pixels = 1 inch (real-world scale for laser cutting). `utils.js` has `pxToIn()` / `inToPx()`. Artboard coordinates ≠ screen coordinates — use `artboard.js` conversion helpers (`screenToArtboard`, `artboardToScreen`) when implementing pointer interactions.
 
+**Zoom is the artboard-wrap's size, not CSS `scale()`.** `_applyViewport()` sets `#artboard-wrap` to `artboard × zoom` px and the SVG `viewBox` does the scaling; `#canvas-stage` only translates (pan). Chrome's `vector-effect: non-scaling-stroke` ignores CSS transforms on HTML ancestors, so a `scale()` there fattens every selection box, handle, guide and hairline. With this setup, screen-fixed strokes use a constant `stroke-width` + `non-scaling-stroke` — never also divide by zoom (that double-compensates to invisible).
+
 ### Shape Data Model
 
 Shapes stored in `state.shapes` array. Each shape has:
