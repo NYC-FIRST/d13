@@ -225,15 +225,19 @@ class Artboard {
     const s = store.get();
     const wPx = inToPx(s.artboard.w);
     const hPx = inToPx(s.artboard.h);
-    this.wrap.style.width  = wPx + 'px';
-    this.wrap.style.height = hPx + 'px';
     this.svg.setAttribute('viewBox', `0 0 ${wPx} ${hPx}`);
     this.svgGrid.setAttribute('viewBox', `0 0 ${wPx} ${hPx}`);
   }
 
   _applyViewport() {
     const s = store.get();
-    this.stage.style.transform = `translate(${s.viewport.panX}px, ${s.viewport.panY}px) scale(${s.viewport.zoom})`;
+    // Zoom = wrap size (the SVG viewBox does the scaling), never CSS scale():
+    // Chrome's vector-effect: non-scaling-stroke ignores CSS transforms on HTML
+    // ancestors, so a scale() there fattens every selection box, handle and guide.
+    const z = s.viewport.zoom;
+    this.wrap.style.width  = inToPx(s.artboard.w) * z + 'px';
+    this.wrap.style.height = inToPx(s.artboard.h) * z + 'px';
+    this.stage.style.transform = `translate(${s.viewport.panX}px, ${s.viewport.panY}px)`;
     this.zoomLevelEl.textContent = Math.round(s.viewport.zoom * 100) + '%';
   }
 
@@ -247,8 +251,8 @@ class Artboard {
     const major = inToPx(1);                // major line every 1"
     const z = s.viewport.zoom;
 
-    const minorStroke = 1 / z;
-    const majorStroke = 1.25 / z;
+    const minorStroke = 1;      // screen px — paths are non-scaling-stroke
+    const majorStroke = 1.25;
     const minorColor = 'var(--grid)';
     const majorColor = 'var(--grid-major)';
 
